@@ -1,0 +1,28 @@
+node_modules/
+
+# OAuth credentials — NEVER commit these
+credentials.json
+token.json
+
+# Environment files — contain secrets
+.env
+.env.local
+.env*.local
+
+# CLI runtime files
+.scan-cache.json
+.unsubscribe-status.json
+cleanup-log.json
+
+# Editor
+.history/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build output
+dist/
+
+# Local agent notes and settings
+.claude/

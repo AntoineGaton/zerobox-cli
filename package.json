@@ -1,0 +1,67 @@
+{
+  "name": "zerobox-cli",
+  "version": "0.1.0",
+  "description": "Clean your Gmail from the terminal: rank senders, bulk-trash, unsubscribe and filter. Runs locally.",
+  "keywords": [
+    "gmail",
+    "email",
+    "inbox-zero",
+    "cli",
+    "unsubscribe",
+    "terminal"
+  ],
+  "license": "MIT",
+  "author": "Antoine Gaton",
+  "homepage": "https://github.com/AntoineGaton/zerobox-cli#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AntoineGaton/zerobox-cli.git"
+  },
+  "bugs": {
+    "url": "https://github.com/AntoineGaton/zerobox-cli/issues"
+  },
+  "type": "module",
+  "bin": {
+    "zerobox": "dist/zerobox.js"
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "start": "tsx src/index.js",
+    "scan": "tsx src/index.js scan",
+    "clean": "tsx src/index.js clean",
+    "unsubscribe": "tsx src/index.js unsubscribe",
+    "filter": "tsx src/index.js filter",
+    "stats": "tsx src/index.js stats",
+    "build": "node build.mjs",
+    "test": "node --test",
+    "prepublishOnly": "npm run build && npm test"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "chalk": "^5.3.0",
+    "cli-progress": "^3.12.0",
+    "cli-table3": "^0.6.3",
+    "commander": "^11.1.0",
+    "dotenv": "^16.4.5",
+    "googleapis": "^144.0.0",
+    "ink": "^4.4.1",
+    "ink-select-input": "^5.0.0",
+    "ink-spinner": "^5.0.0",
+    "inquirer": "^9.2.12",
+    "open": "^10.1.0",
+    "ora": "^8.0.1",
+    "react": "^18.3.1",
+    "string-width": "^5.1.2"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.12",
+    "tsx": "^4.21.0"
+  }
+}
