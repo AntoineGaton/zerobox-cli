@@ -39,7 +39,8 @@
     "stats": "tsx src/index.js stats",
     "build": "node build.mjs",
     "test": "node --test",
-    "prepublishOnly": "npm run build && npm test"
+    "prepublishOnly": "npm run build && npm test",
+    "build:demo": "node build-demo.mjs"
   },
   "engines": {
     "node": ">=20"

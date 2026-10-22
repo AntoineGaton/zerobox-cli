@@ -70,3 +70,16 @@ See `.env.example`. Both are **server-only** (never prefix them with `NEXT_PUBLI
 
 - The support link points at GitHub Sponsors (`LINKS.sponsor` in `lib/links.ts`).
 - Docs and Changelog links point at the GitHub README and `CHANGELOG.md` (`lib/links.ts`).
+
+## Deploy
+
+Production is the Vercel project `zerobox` (team Code Monkey Studios), served at
+https://zerobox-orpin.vercel.app. Deploy from `site/`:
+
+```bash
+cd site
+vercel deploy --prod --scope code-monkey-studios
+```
+
+`og:url` comes from `VERCEL_PROJECT_PRODUCTION_URL` at build time. Set `NEXT_PUBLIC_SITE_URL`
+once a custom domain exists. The npm footer link 404s until `zerobox-cli` is published to npm.

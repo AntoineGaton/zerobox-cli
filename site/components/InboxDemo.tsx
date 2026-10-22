@@ -1,273 +1,209 @@
 "use client";
 
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
-import { Logo } from "./Logo";
-import { DATA, UNSUB, VCOLOR, fmt } from "@/lib/demo-data";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
+import {
+  bodyHeight, buildPlan, currentStage, demoData, fakeStage, initialState, layout, reduce,
+  renderScreen, screenSize, stageDone, visibleRows, type Key, type Meta, type UiState,
+} from "@/lib/tui-demo";
 
-type Flags = Record<string, true>;
-type State = {
-  sel: number;
-  trash: Flags;
-  unsub: Flags;
-  gone: Flags;
-  unsubbed: Flags;
-  msg: string;
-  /** R was pressed: the plan is shown and waits for Enter (apply) or Esc. */
-  confirm: boolean;
-};
+/** The sender list starts on this screen line: header, rule, column titles. */
+const LIST_TOP = 3;
+/** Terminal rows: enough for the wide detail pane, fewer on phones. */
+const ROWS_WIDE = 24;
+const ROWS_NARROW = 20;
+const APPLY_MS = 1000;
+const TICK_MS = 50;
 
-const INITIAL: State = { sel: 0, trash: {}, unsub: {}, gone: {}, unsubbed: {}, msg: "", confirm: false };
+const FOREVER = Date.parse("2026-10-01T12:00:00Z");
+
+/** Browser key → the (input, key) pair Ink gives the terminal app. */
+function toInk(e: KeyboardEvent): { input: string; key: Key } | null {
+  const named: Record<string, Key> = {
+    ArrowUp: { upArrow: true }, ArrowDown: { downArrow: true }, ArrowLeft: { leftArrow: true }, ArrowRight: { rightArrow: true },
+    Enter: { return: true }, Escape: { escape: true }, Backspace: { backspace: true }, Delete: { delete: true },
+    PageUp: { pageUp: true }, PageDown: { pageDown: true }, Home: { home: true }, End: { end: true },
+  };
+  if (e.metaKey || e.altKey) return null;
+  if (named[e.key]) return { input: "", key: { ...named[e.key], shift: e.shiftKey } };
+  if (e.key.length !== 1) return null;
+  if (e.ctrlKey) return /^[a-z]$/i.test(e.key) ? { input: e.key.toLowerCase(), key: { ctrl: true } } : null;
+  return { input: e.key, key: { shift: e.key !== e.key.toLowerCase() } };
+}
+
+/** On-screen keys for touch screens and mouse users. */
+const PADS: { label: string; title: string; ev: { input: string; key: Key } }[] = [
+  { label: "↑", title: "Up", ev: { input: "", key: { upArrow: true } } },
+  { label: "↓", title: "Down", ev: { input: "", key: { downArrow: true } } },
+  { label: "Space", title: "Select for cleanup", ev: { input: " ", key: {} } },
+  { label: "A", title: "Select all in view", ev: { input: "A", key: { shift: true } } },
+  { label: "Del", title: "Mark for trash", ev: { input: "", key: { delete: true } } },
+  { label: "R", title: "Review", ev: { input: "R", key: { shift: true } } },
+  { label: "Enter", title: "Enter", ev: { input: "", key: { return: true } } },
+  { label: "Esc", title: "Escape", ev: { input: "", key: { escape: true } } },
+  { label: "?", title: "Help", ev: { input: "?", key: { shift: true } } },
+];
+
+type Data = { rows: unknown[]; meta: Meta };
+
+function freshData(): Data {
+  return demoData(FOREVER);
+}
 
 /**
- * Interactive sample inbox, with the same familiar keys as the terminal app:
- * ↑ ↓ move, Space selects for cleanup (unsubscribe + trash), Delete trashes,
- * U unsubscribes, R reviews and Enter applies. Esc cancels the review, or
- * resets the demo. The Vim keys j k d u w work too.
- * Keyboard shortcuts are handled only on this element (onKeyDown on the
- * terminal frame), never on window/document.
+ * The real ZeroBox screen, running in the browser: lib/tui-demo.js is the
+ * app's own screen, model and key code (bundled from src/tui/demo.js), with a
+ * sample inbox. Applying a review fakes Gmail; nothing leaves the page.
+ * Keys are handled only on this element, never on window/document.
  */
 export function InboxDemo() {
-  const [s, setS] = useState<State>(INITIAL);
-  const rowRefs = useRef<(HTMLButtonElement | null)[]>([]);
-  const focusRow = useRef(false);
+  const boxRef = useRef<HTMLDivElement>(null);
+  const probeRef = useRef<HTMLSpanElement>(null);
+  const [cols, setCols] = useState(120);
+  const [data, setData] = useState<Data>(freshData);
+  const [state, setState] = useState<UiState>(() => initialState(data.rows));
+  // The latest state for timers and handlers; update() keeps it in step
+  const stateRef = useRef(state);
+  // Senders a faked apply trashed or unsubscribed: gone or marked on reload, as after a real run
+  const done = useRef({ trashed: new Set<string>(), unsubbed: new Set<string>() });
+  const stop = useRef(false);
+  const timer = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const vis = DATA.filter((d) => !s.gone[d.id]);
-  const sel = Math.max(0, Math.min(s.sel, vis.length - 1));
-  const cur = vis[sel] ?? null;
+  // Columns that fit: the box width over one monospace cell
+  useLayoutEffect(() => {
+    const box = boxRef.current;
+    const probe = probeRef.current;
+    if (!box || !probe) return;
+    const measure = () => {
+      const cell = probe.getBoundingClientRect().width / 100;
+      const pad = parseFloat(getComputedStyle(box).paddingLeft) + parseFloat(getComputedStyle(box).paddingRight);
+      if (cell > 0) setCols(Math.max(40, Math.floor((box.clientWidth - pad) / cell)));
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(box);
+    return () => ro.disconnect();
+  }, []);
 
-  let tN = 0;
-  let tE = 0;
-  let uN = 0;
-  for (const d of vis) {
-    if (s.trash[d.id]) {
-      tN++;
-      tE += d.count;
-    }
-    if (s.unsub[d.id]) uN++;
-  }
-  const total = vis.reduce((a, d) => a + d.count, 0);
+  useEffect(() => () => {
+    if (timer.current) clearInterval(timer.current);
+  }, []);
 
-  // Keep keyboard focus on the highlighted row when j/k moves the selection.
-  useEffect(() => {
-    if (focusRow.current) {
-      focusRow.current = false;
-      rowRefs.current[sel]?.focus();
-    }
-  }, [sel]);
+  const wide = layout(cols).wide;
+  const size = screenSize(cols, wide ? ROWS_WIDE : ROWS_NARROW);
+  const ctx = { height: bodyHeight(size.rows), wide };
 
-  const patch = (p: Partial<State>) => setS((prev) => ({ ...prev, ...p }));
+  const update = useCallback((next: UiState) => {
+    stateRef.current = next;
+    setState(next);
+  }, []);
 
-  function toggle(key: "trash" | "unsub") {
-    if (!cur) return;
-    if (cur.verdict === "Protect") {
-      patch({ msg: "Protected: bank, health and account mail is never bulk-trashed or unsubscribed.", confirm: false });
-      return;
-    }
-    if (key === "unsub" && cur.unsub === "none") {
-      patch({ msg: "No unsubscribe link for this sender. Account mail usually has none.", confirm: false });
-      return;
-    }
-    const m: Flags = { ...s[key] };
-    if (m[cur.id]) delete m[cur.id];
-    else m[cur.id] = true;
-    patch({ [key]: m, msg: "", confirm: false });
-  }
+  const resetDemo = useCallback((flash = "") => {
+    if (timer.current) clearInterval(timer.current);
+    done.current = { trashed: new Set(), unsubbed: new Set() };
+    const fresh = freshData();
+    setData(fresh);
+    update({ ...initialState(fresh.rows), flash });
+  }, [update]);
 
-  /** Space: select for cleanup (unsubscribe + trash), or unselect. */
-  function select() {
-    if (!cur) return;
-    if (cur.verdict === "Protect") {
-      patch({ msg: "Protected: bank, health and account mail is never bulk-trashed or unsubscribed.", confirm: false });
-      return;
-    }
-    const canUnsub = cur.unsub !== "none" && !s.unsubbed[cur.id];
-    const on = !(s.trash[cur.id] && (!canUnsub || s.unsub[cur.id]));
-    const trash: Flags = { ...s.trash };
-    const unsub: Flags = { ...s.unsub };
-    if (on) {
-      trash[cur.id] = true;
-      if (canUnsub) unsub[cur.id] = true;
-    } else {
-      delete trash[cur.id];
-      delete unsub[cur.id];
-    }
-    patch({ trash, unsub, msg: "", confirm: false });
-  }
+  /** Fake one stage of the apply: a progress bar, then the app's own result handling. */
+  const apply = () => {
+    const s = stateRef.current;
+    const kind = currentStage(s);
+    if (!kind) return;
+    const plan = buildPlan(s.rows, s.marks);
+    const fake = fakeStage(plan, kind);
+    let ticks = 0;
+    stop.current = false;
+    timer.current = setInterval(() => {
+      const t = Math.min(1, (++ticks * TICK_MS) / APPLY_MS);
+      const total = Math.max(1, fake.total);
+      if (t < 1 && !stop.current) {
+        update({ ...stateRef.current, progress: { label: fake.label, done: Math.round(total * t), total, rate: total / (APPLY_MS / 1000) } });
+        return;
+      }
+      if (timer.current) clearInterval(timer.current);
+      if (kind === "trash") for (const p of plan.trash) done.current.trashed.add(p.email);
+      if (kind === "unsub") for (const p of plan.unsub) if (p.method !== "web") done.current.unsubbed.add(p.email);
+      update(stageDone(stateRef.current, kind, stop.current ? { ...fake.result, stopped: true } : fake.result));
+    }, TICK_MS);
+  };
 
-  /** R: show what will happen; Enter applies it. */
-  function review() {
-    if (!tN && !uN) {
-      patch({ msg: "Nothing selected yet. Press Space on a sender first.", confirm: false });
-      return;
-    }
-    const parts = [uN && `unsubscribe from ${uN}`, tN && `move ${fmt(tE)} emails to Trash`].filter(Boolean).join(" and ");
-    patch({ msg: `${parts.charAt(0).toUpperCase()}${parts.slice(1)}? Enter do it · Esc cancel`, confirm: true });
-  }
+  /** After the result screen: rows as a fresh scan would show them. */
+  const reload = () => {
+    const base = freshData();
+    const rows = (base.rows as { email: string; count: number }[])
+      .filter((r) => !done.current.trashed.has(r.email))
+      .map((r) => (done.current.unsubbed.has(r.email) ? { ...r, unsubDone: true } : r));
+    const meta = { ...base.meta, senderCount: rows.length, totalEmails: rows.reduce((n, r) => n + r.count, 0) };
+    setData({ rows, meta });
+    const s = stateRef.current;
+    const marks = Object.fromEntries(Object.entries(s.marks).filter(([email]) => rows.some((r) => r.email === email)));
+    const next = { ...s, rows, marks };
+    update({ ...next, cursor: Math.min(next.cursor, Math.max(0, visibleRows(next).length - 1)) });
+  };
 
-  function apply() {
-    if (!tN && !uN) return;
-    const gone: Flags = { ...s.gone };
-    const unsubbed: Flags = { ...s.unsubbed };
-    for (const d of vis) {
-      if (s.trash[d.id]) gone[d.id] = true;
-      if (s.unsub[d.id]) unsubbed[d.id] = true;
-    }
-    setS({
-      gone,
-      unsubbed,
-      trash: {},
-      unsub: {},
-      sel: 0,
-      msg: `Moved ${fmt(tE)} emails to Trash and unsubscribed from ${uN}. Restore any time in the next 30 days.`,
-      confirm: false,
-    });
-  }
-
-  const reset = () => setS(INITIAL);
-
-  function move(delta: number) {
-    focusRow.current = rowRefs.current.includes(document.activeElement as HTMLButtonElement);
-    patch({ sel: Math.max(0, Math.min(vis.length - 1, sel + delta)), msg: "", confirm: false });
-  }
+  const send = (ev: { input: string; key: Key }) => {
+    const { state: next, effect } = reduce(stateRef.current, ev, ctx);
+    update(next);
+    if (effect === "apply") apply();
+    else if (effect === "reload") reload();
+    else if (effect === "cancel") stop.current = true;
+    else if (effect === "quit") resetDemo("Demo restarted. In your terminal, this quits ZeroBox.");
+    else if (effect === "rescan") resetDemo("Demo restarted. In your terminal, this scans your Gmail again.");
+    // save-settings and save-protect: the state already holds the change; there is no file to write
+  };
 
   function onKey(e: KeyboardEvent<HTMLDivElement>) {
-    if (e.metaKey || e.ctrlKey || e.altKey) return;
-    const k = e.key;
-    let handled = true;
-    if (k === "ArrowDown" || k === "j") move(1);
-    else if (k === "ArrowUp" || k === "k") move(-1);
-    else if (k === " ") select();
-    else if (k === "Delete" || k === "Backspace" || k === "d") toggle("trash");
-    else if (k === "u" || k === "U") toggle("unsub");
-    else if (k === "r" || k === "R" || k === "w") review();
-    else if (k === "Enter" && s.confirm) apply();
-    else if (k === "Escape") {
-      if (s.confirm) patch({ msg: "Nothing changed. Your selection is kept.", confirm: false });
-      else reset();
-    } else handled = false;
-    if (handled) e.preventDefault();
+    if (e.key === "Tab") return; // keep Tab for moving focus off the demo
+    const ev = toInk(e);
+    if (!ev) return;
+    e.preventDefault();
+    send(ev);
   }
 
-  const status = tN || uN ? `${tN} marked → trash ${fmt(tE)} · unsub ${uN}` : "nothing marked";
-  const posStr = vis.length ? `${sel + 1}/${vis.length}` : "0/0";
+  /** Click a sender line to move the cursor there; click it again to open it on narrow screens. */
+  function onClick(line: number) {
+    boxRef.current?.focus();
+    const s = stateRef.current;
+    if (s.mode !== "normal" || (s.detail && !wide)) return;
+    const index = s.top + line - LIST_TOP;
+    if (line < LIST_TOP || index >= visibleRows(s).length) return;
+    if (index === s.cursor && !wide) send({ input: "", key: { return: true } });
+    else update({ ...s, cursor: index, flash: "" });
+  }
+
+  const lines = renderScreen(state, size, { ...data.meta, now: FOREVER });
 
   return (
-    // The frame is focusable so the shortcuts work before a row is clicked.
-    <div
-      className="tui"
-      tabIndex={0}
-      onKeyDown={onKey}
-      role="group"
-      aria-label="ZeroBox demo inbox. Keys: up and down arrows move, Space selects a sender for cleanup, Delete marks for trash, U marks for unsubscribe, R reviews and Enter applies, Escape resets."
-    >
-      <div className="tui-top">
-        <span className="tui-top-l">
-          <Logo width={20} height={15} />
-          <span className="bright">zerobox</span> demo@example.com
-        </span>
-        <span>{fmt(total)} emails · sample data</span>
-      </div>
-      <div className="tui-grid">
-        <div className="tui-list">
-          <div className="tui-cols tui-head" aria-hidden="true">
-            <span />
-            <span>Sender</span>
-            <span className="r">Emails</span>
-            <span className="r">Read</span>
-            <span className="r">Verdict</span>
+    <div className="tui-demo">
+      <div
+        ref={boxRef}
+        className="tui-screen"
+        tabIndex={0}
+        onKeyDown={onKey}
+        role="group"
+        aria-roledescription="terminal demo"
+        aria-label="ZeroBox demo with sample mail. Up and down arrows move, Space selects a sender, A selects all, Delete marks for trash, R reviews, Enter confirms, Escape goes back, question mark shows help."
+      >
+        <span ref={probeRef} className="tui-probe" aria-hidden="true">{"M".repeat(100)}</span>
+        {lines.map((segs, i) => (
+          <div key={i} className="tui-line" onClick={() => onClick(i)}>
+            {segs.map((s, j) => (
+              <span key={j} style={{ color: s.fg, background: s.bg, fontWeight: s.bold ? 700 : undefined }}>{s.t}</span>
+            ))}
           </div>
-          {vis.map((d, i) => {
-            const isT = !!s.trash[d.id];
-            const isU = !!s.unsub[d.id];
-            const mark = isT && isU ? "du" : isT ? "d" : isU ? "u" : "·";
-            const markColor = isT ? "#FF8A7A" : isU ? "#28EAEC" : "#4A525C";
-            const marked = [isT && "marked for trash", isU && "marked to unsubscribe"].filter(Boolean).join(", ");
-            return (
-              <button
-                key={d.id}
-                ref={(el) => {
-                  rowRefs.current[i] = el;
-                }}
-                className="row-btn tui-cols"
-                type="button"
-                aria-current={i === sel ? "true" : undefined}
-                aria-label={`${d.name}, ${fmt(d.count)} emails, ${d.read}% read, verdict ${d.verdict}${marked ? `, ${marked}` : ""}`}
-                onClick={() => patch({ sel: i, msg: "", confirm: false })}
-              >
-                <span className="row-mark" style={{ color: markColor }}>
-                  {mark}
-                </span>
-                <span className="ellipsis">{d.name}</span>
-                <span className="r">{fmt(d.count)}</span>
-                <span className="r c-2">{d.read}%</span>
-                <span className="r" style={{ color: VCOLOR[d.verdict] }}>
-                  {d.verdict}
-                </span>
-              </button>
-            );
-          })}
-          {vis.length === 0 && <div className="tui-empty">Inbox zero. Press Esc to reset the demo.</div>}
-        </div>
-        <div className="tui-detail">
-          {cur && (
-            <>
-              <div className="det-head">
-                <div className="det-name">{cur.name}</div>
-                <div className="det-addr">{cur.addr}</div>
-              </div>
-              <dl className="det-grid">
-                <dt>emails</dt>
-                <dd>{fmt(cur.count)}</dd>
-                <dt>opened</dt>
-                <dd>{cur.read}%</dd>
-                <dt>verdict</dt>
-                <dd style={{ color: VCOLOR[cur.verdict] }}>{cur.verdict}</dd>
-                <dt>unsubscribe</dt>
-                <dd>{s.unsubbed[cur.id] ? "unsubscribed ✓" : UNSUB[cur.unsub]}</dd>
-              </dl>
-              <div className="det-sub-h">Recent subjects</div>
-              <ul className="det-subs">
-                {cur.subjects.map((t) => (
-                  <li key={t} className="ellipsis">
-                    · {t}
-                  </li>
-                ))}
-              </ul>
-            </>
-          )}
-          <div className="keys">
-            <button className="key" type="button" onClick={select}>
-              <span className="c-red">Space</span> select
-            </button>
-            <button className="key" type="button" onClick={() => toggle("trash")}>
-              <span className="c-red">Delete</span> trash
-            </button>
-            <button className="key" type="button" onClick={() => toggle("unsub")}>
-              <span className="accent">U</span> unsubscribe
-            </button>
-            {s.confirm ? (
-              <button className="key key-apply" type="button" onClick={apply}>
-                <span className="accent">Enter</span> do it
-              </button>
-            ) : (
-              <button className="key key-apply" type="button" onClick={review}>
-                <span className="accent">R</span> review
-              </button>
-            )}
-            <button className="key key-reset" type="button" onClick={reset}>
-              Esc reset
-            </button>
-          </div>
-        </div>
+        ))}
       </div>
-      <div aria-live="polite">{s.msg && <div className="tui-msg">{s.msg}</div>}</div>
-      <div className="tui-status">
-        <span className="mode">NORMAL</span>
-        <span className="st-main" aria-live="polite">
-          {status}
-        </span>
-        <span className="st-help">↑↓ move · Space select · R review</span>
-        <span className="st-pos">{posStr}</span>
+      <div className="sr-only" aria-live="polite">{state.flash}</div>
+      <div className="tui-pads">
+        {PADS.map((p) => (
+          <button key={p.label} type="button" className="key" title={p.title} onClick={() => { send(p.ev); boxRef.current?.focus(); }}>
+            {p.label}
+          </button>
+        ))}
+        <button type="button" className="key key-reset" onClick={() => { resetDemo(); boxRef.current?.focus(); }}>
+          Reset demo
+        </button>
       </div>
     </div>
   );

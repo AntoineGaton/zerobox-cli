@@ -3,6 +3,7 @@ import { InboxDemo } from "@/components/InboxDemo";
 import { Logo } from "@/components/Logo";
 import { WaitlistForm } from "@/components/WaitlistForm";
 import { LINKS } from "@/lib/links";
+import { Particles } from "@/components/Particles";
 
 const FACTS = [
   { v: "Local", l: "No ZeroBox account · no server" },
@@ -36,6 +37,7 @@ export default function Home() {
 
       <main>
         <section id="top" className="hero">
+          <Particles />
           <Logo width={620} height={462} className="hero-ghost" />
           <div className="wrap hero-in">
             <div className="eyebrow">
@@ -75,8 +77,15 @@ export default function Home() {
           </div>
         </section>
 
-        <section className="border-b" aria-labelledby="demo-cap">
+        <section className="border-b" aria-labelledby="demo-h">
           <div className="wrap demo-sec">
+            <div className="demo-head">
+              <div className="demo-eyebrow">
+                <span className="accent">Live demo</span> <span className="c-3">· try it here</span>
+              </div>
+              <h2 id="demo-h">Try ZeroBox right here.</h2>
+              <p>This is the terminal app’s own screen and keys, running in your browser with sample mail. Click it and press keys. Nothing is sent anywhere.</p>
+            </div>
             <div className="demo-cap">
               <span id="demo-cap">Your inbox, from a terminal</span>
               <span>Click a sender, then Space and R</span>
@@ -186,6 +195,7 @@ export default function Home() {
         </section>
 
         <section className="close-sec" aria-labelledby="close-h">
+          <Particles />
           <Logo width={560} height={417} className="close-ghost" />
           <div className="wrap close-in">
             <h2 id="close-h" className="close-h">
@@ -220,8 +230,8 @@ export default function Home() {
           </div>
           <div className="foot-grp">
             <span>v0.1.0 · MIT</span>
-            {/* TODO(owner): placeholder until the real Buy Me a Coffee URL exists. */}
             <a href={LINKS.sponsor} className="coffee cta">Sponsor on GitHub</a>
+            <a href={LINKS.coffee} className="coffee cta">Buy me a coffee</a>
           </div>
         </div>
       </footer>
