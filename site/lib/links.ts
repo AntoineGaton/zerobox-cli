@@ -4,6 +4,8 @@ export const LINKS = {
   docs: "https://github.com/AntoineGaton/zerobox-cli#readme",
   changelog: "https://github.com/AntoineGaton/zerobox-cli/blob/main/CHANGELOG.md",
   sponsor: "https://github.com/sponsors/AntoineGaton",
+  // The buymeacoffee.com/codemonkeystudios handle is still pending; the page may 404 until it is claimed.
+  coffee: "https://buymeacoffee.com/codemonkeystudios",
 } as const;
 
 /** Absolute site origin, used for Open Graph URLs. Set NEXT_PUBLIC_SITE_URL once a domain exists. */

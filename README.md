@@ -175,6 +175,12 @@ npm test           # unit tests and CLI smoke tests (build first)
 
 The landing page lives in [`site/`](site/README.md). See [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md).
 
+## Support
+
+ZeroBox is free and MIT licensed. If it saves you time, you can
+[sponsor on GitHub](https://github.com/sponsors/AntoineGaton) or
+[buy me a coffee](https://buymeacoffee.com/codemonkeystudios).
+
 ## License
 
 [MIT](LICENSE) © 2026 Antoine Gaton
